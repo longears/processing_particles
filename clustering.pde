@@ -87,8 +87,9 @@ void clipToWorld(PVector pos, PVector vel) {
 // PARTICLE
 
 class Particle {
-    PVector pos, vel;
+    PVector pos, vel, force;
     color c;
+    float velDamping, maxVel, maxForce;
     float rad;
 
     Particle(float rad_, PVector pos_, PVector vel_, color c_) {
@@ -96,11 +97,29 @@ class Particle {
         c = c_;
         pos = pos_;
         vel = vel_;
+        force = new PVector(0,0);
+        velDamping = 0;
+        maxVel = 1000;
+        maxForce = 1000;
     }
 
-    void update() {
-        pos.add(vel);
+    void preUpdate() {}
+    void calcForce() {}
+    void applyForce() {
+        force.limit(maxForce);
+        vel.add(force);
+        vel.mult(1-velDamping*TIME_SPEED);
+        vel.limit(maxVel);
+        pos.add(PVector.mult(vel,TIME_SPEED));
         clipToWorld(pos,vel);
+    }
+    void postUpdate() {}
+
+    void update() {
+        preUpdate();
+        calcForce();
+        applyForce();
+        postUpdate();
     }
 
     void draw() {
@@ -153,20 +172,11 @@ class BigParticle extends Particle {
         }
     }
 
-    void update() {
-        //pos = PVector.add(  PVector.mult(pos, 1-CLUSTER_SEEK_SPEED),
-        //                    PVector.mult(clusterCenter, CLUSTER_SEEK_SPEED)  );
-
+    void calcForce() {
+        force = PVector.sub(clusterCenter,pos);
+    }
+    void postUpdate() {
         rad = rad*(1-RAD_CHANGE_SPEED) + targetRad * RAD_CHANGE_SPEED;
-
-        PVector force = PVector.sub(clusterCenter,pos);
-        force.limit(MAX_FORCE);
-
-        vel.add(force);
-        vel.mult(1-VEL_DAMPING*TIME_SPEED);
-
-        pos.add(PVector.mult(vel,TIME_SPEED));
-        clipToWorld(pos,vel);
     }
 
     void draw() {
@@ -183,32 +193,24 @@ class SmallParticle extends Particle {
         super(rad_,pos_,vel_,color(0));
         bigParticlePos = new PVector(0,0);
     }
-    void update() {
+
+    void calcForce() {
+        force = new PVector(0,0);
         // wiggle
-        vel.x += random(-1,1) * SMALL_WIGGLE_FORCE*0.8;
-        vel.y += random(-1,1) * SMALL_WIGGLE_FORCE*0.8;
-        //vel.x += (noise(FRAME/30.0*NOISE_MORPH_SPEED, pos.x/NOISE_SCALE, pos.y/NOISE_SCALE)*2-0.94) * SMALL_WIGGLE_FORCE;
-        //vel.y += (noise(FRAME/30.0*NOISE_MORPH_SPEED, pos.x/NOISE_SCALE+1700.2, pos.y/NOISE_SCALE+5733.47)*2-0.94) * SMALL_WIGGLE_FORCE;
+        force.x = random(-1,1) * SMALL_WIGGLE_FORCE*0.8;
+        force.y = random(-1,1) * SMALL_WIGGLE_FORCE*0.8;
 
         if (SMALL_ATTRACTIVE_FORCE != 0) {
-            PVector force = PVector.sub(bigParticlePos,pos);
+            force.add(  PVector.sub(bigParticlePos,pos)   );
             float dist = force.mag();
             force.normalize();
 
             if (dist < bigParticleRad/2) {
                 force.mult(-1);
             }
-
-            force.mult(SMALL_ATTRACTIVE_FORCE);
-            force.limit(MAX_FORCE);
-            vel.add(force);
         }
-
-        vel.limit(SMALL_MAX_SPEED);
-
-        pos.add(PVector.mult(vel,TIME_SPEED));
-        clipToWorld(pos,vel);
     }
+
     void draw() {
         fill(c);
         noStroke();
@@ -242,19 +244,31 @@ void setup() {
     for (int ii=0; ii < N_BIG_PARTICLES; ii++) {
         PVector pos = new PVector(random(0,WORLD_X),random(0,WORLD_Y));
         PVector vel = new PVector(0,0);
-        bigParticles.add(   new BigParticle(BIG_PARTICLE_RAD, pos, vel)   );
+        BigParticle bp = new BigParticle(BIG_PARTICLE_RAD, pos, vel);
+        bp.velDamping = VEL_DAMPING;
+        bp.maxForce = MAX_FORCE;
+        bp.maxVel = 100000;
+        bigParticles.add(bp);
     }
     // set up small particles
     for (int ii=0; ii < N_SMALL_PARTICLES; ii++) {
         PVector pos = pointInCircle(new PVector(WORLD_X/2.0 * 0.7,WORLD_Y/2.0), WORLD_Y/2.0 * 0.85);
         PVector vel = new PVector(0,0);
-        smallParticles.add(   new SmallParticle(SMALL_PARTICLE_RAD, pos, vel)   );
+        SmallParticle sp = new SmallParticle(SMALL_PARTICLE_RAD, pos, vel);
+        sp.velDamping = 0;
+        sp.maxForce = 10000;
+        sp.maxVel = SMALL_MAX_SPEED;
+        smallParticles.add(sp);
     }
     // set up small particles
     for (int ii=0; ii < N_SMALL_PARTICLES/4; ii++) {
         PVector pos = pointInCircle(new PVector(WORLD_X/2.0 *1.7,WORLD_Y/2.0*0.8), WORLD_Y/2.0 * 0.3);
         PVector vel = new PVector(0,0);
-        smallParticles.add(   new SmallParticle(SMALL_PARTICLE_RAD, pos, vel)   );
+        SmallParticle sp = new SmallParticle(SMALL_PARTICLE_RAD, pos, vel);
+        sp.velDamping = 0;
+        sp.maxForce = 10000;
+        sp.maxVel = SMALL_MAX_SPEED;
+        smallParticles.add(sp);
     }
 
     fs = new SoftFullScreen(this);
@@ -267,14 +281,22 @@ void keyPressed() {
             PVector pos = pointInCircle(new PVector(mouseX,mouseY), 100);
             PVector vel = PVector.sub(pos, new PVector(mouseX,mouseY));
             vel.mult(5);
-            smallParticles.add(   new SmallParticle(SMALL_PARTICLE_RAD, pos, vel)   );
+            SmallParticle sp = new SmallParticle(SMALL_PARTICLE_RAD, pos, vel);
+            sp.velDamping = 0;
+            sp.maxForce = 10000;
+            sp.maxVel = SMALL_MAX_SPEED;
+            smallParticles.add(sp);
         }
     }
     if (key == 'b') {
         for (int ii=0; ii < 40; ii++) {
             PVector pos = pointInCircle(new PVector(mouseX,mouseY), 20);
             PVector vel = new PVector(0,0);
-            bigParticles.add(   new BigParticle(BIG_PARTICLE_RAD, pos, vel)   );
+            BigParticle bp = new BigParticle(BIG_PARTICLE_RAD, pos, vel);
+            bp.velDamping = VEL_DAMPING;
+            bp.maxForce = MAX_FORCE;
+            bp.maxVel = 100000;
+            bigParticles.add(bp);
         }
     }
     if (key == 'r') {
@@ -297,7 +319,11 @@ void keyPressed() {
 void mousePressed() {
     PVector pos = new PVector(mouseX,mouseY);
     PVector vel = new PVector(0,0);
-    bigParticles.add(   new BigParticle(BIG_PARTICLE_RAD, pos, vel)   );
+    BigParticle bp = new BigParticle(BIG_PARTICLE_RAD, pos, vel);
+    bp.velDamping = VEL_DAMPING;
+    bp.maxForce = MAX_FORCE;
+    bp.maxVel = 100000;
+    bigParticles.add(bp);
 }
 
 void draw() {
