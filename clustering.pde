@@ -23,7 +23,7 @@ int FRAME = 0;
 
 int WORLD_X = 800;
 int WORLD_Y = 500;
-int N_BIG_PARTICLES = 40;
+int N_BIG_PARTICLES = 2;//40;
 int N_SMALL_PARTICLES = 200;
 
 // DRAWING
@@ -35,6 +35,16 @@ int BIG_BRIGHTNESS = 80;
 int BIG_SATURATION = 80;
 int SMALL_BRIGHTNESS = 60;
 int SMALL_SATURATION = 80;
+
+// ACTION
+int MAX_TIME_TO_DIE_IF_SMALL = 5 * 30;
+int MAX_TIME_TO_SPLIT_IF_BIG = 2 * 30;
+int TOO_MANY_PARTICLES_IN_CLUSTER = 7;
+int TOO_FEW_PARTICLES_IN_CLUSTER = 6;
+
+float RAD_PER_CLUSTER_MEMBER = 4;
+int TRAILS = 1;
+
 
 // MOTION
 float TIME_SPEED = 0.1;
@@ -101,6 +111,7 @@ class ParticleGroup {
         p.velDamping = velDamping;
         p.maxVel = maxVel;
         p.maxForce = maxForce;
+        p.particleGroup = this;
     }
     Particle get(int ii) {
         return (Particle) particles.get(ii);
@@ -108,23 +119,34 @@ class ParticleGroup {
     int size() {
         return particles.size();
     }
+
+    void preTick() {}
+    void postTick() {}
     void tick() {
+        preTick();
         for (int ii=0; ii < particles.size(); ii++) {
             Particle p = (Particle) particles.get(ii);
             p.tick();
         }
+        postTick();
     }
+
     void draw() {
         for (int ii=0; ii < particles.size(); ii++) {
             Particle p = (Particle) particles.get(ii);
             p.draw();
         }
     }
+
+    void kill(Particle p) {
+        particles.remove(p);
+    }
 }
 
 
 
 class Particle {
+    ParticleGroup particleGroup;
     PVector pos, vel, force;
     color c;
     float rad;
@@ -165,6 +187,10 @@ class Particle {
         noStroke();
         ellipse(pos.x, pos.y, rad, rad);
     }
+
+    void die() {
+        particleGroup.kill(this);
+    }
 }
 
 
@@ -174,7 +200,10 @@ class BigParticle extends Particle {
     PVector lonelyDestination;
     int numClusterMembers;
     int isLonely;
+    int framesTooSmall;
+    int framesTooBig;
     float targetRad;
+    int frameDivided;
 
     BigParticle(float rad_, PVector pos_, PVector vel_) {
         super(rad_,pos_,vel_,color(0));
@@ -184,6 +213,9 @@ class BigParticle extends Particle {
         lonelyDestination = new PVector(0,0);
         numClusterMembers = 0;
         isLonely = 0;
+        framesTooSmall = int(random(0,MAX_TIME_TO_DIE_IF_SMALL*0.8));
+        framesTooBig = int(random(0,MAX_TIME_TO_SPLIT_IF_BIG*0.8));
+        frameDivided = FRAME;
     }
 
     void calcForce() {
@@ -191,18 +223,45 @@ class BigParticle extends Particle {
     }
     void postTick() {
         rad = rad*(1-RAD_CHANGE_SPEED) + targetRad * RAD_CHANGE_SPEED;
+
+        framesTooSmall += 1;
+        if (numClusterMembers > TOO_FEW_PARTICLES_IN_CLUSTER) {
+            framesTooSmall = 0;
+        }
+        framesTooBig += 1;
+        if (numClusterMembers < TOO_MANY_PARTICLES_IN_CLUSTER) {
+            framesTooBig = 0;
+        }
+
+        if (framesTooSmall > MAX_TIME_TO_DIE_IF_SMALL) {
+            die();
+        }
+        //if (numClusterMembers >= TOO_MANY_PARTICLES_IN_CLUSTER && FRAME > frameDivided + MAX_TIME_TO_SPLIT_IF_BIG) {
+        if (framesTooBig > MAX_TIME_TO_SPLIT_IF_BIG) {
+            framesTooBig = int(random(0,MAX_TIME_TO_SPLIT_IF_BIG*0.8));
+            BigParticle clone = new BigParticle(rad,
+                                                new PVector(pos.x,pos.y),
+                                                new PVector(vel.x,vel.y));
+            clone.pos.y += random(-0.3,0.3); 
+            clone.pos.x += random(-0.3,0.3); 
+            clone.numClusterMembers = 0;
+            clone.clusterCenter = new PVector(clusterCenter.x, clusterCenter.y);
+            clone.rad = 0;
+            frameDivided = FRAME;
+            particleGroup.add(clone);
+        }
     }
 
 
-    void resetCluster() {
+    void resetClusterMembership() {
         clusterCenter.mult(0);
         numClusterMembers = 0;
     }
-    void seeNewClusterMember(Particle p) {
+    void addClusterMember(Particle p) {
         clusterCenter.add(p.pos);
         numClusterMembers += 1;
     }
-    void finishSeeingNewClusterMembers() {
+    void finalizeCluster() {
         if (numClusterMembers == 0) {
             // we've got no points, so let's just go to the middle of the world.
             //clusterCenter = new PVector(WORLD_X/2.0,WORLD_Y/2.0);
@@ -212,10 +271,10 @@ class BigParticle extends Particle {
             }
             clusterCenter.x = lonelyDestination.x;
             clusterCenter.y = lonelyDestination.y;
-            targetRad = 10;
+            targetRad = RAD_PER_CLUSTER_MEMBER;
         } else {
             clusterCenter.div(numClusterMembers);
-            targetRad = numClusterMembers * 10;
+            targetRad = numClusterMembers * RAD_PER_CLUSTER_MEMBER;
             isLonely = 0;
         }
     }
@@ -224,28 +283,33 @@ class BigParticle extends Particle {
 
 
 class SmallParticle extends Particle {
-    PVector bigParticlePos;
-    float bigParticleRad;
+    Particle clusterParent;
+
     SmallParticle(float rad_, PVector pos_, PVector vel_) {
         super(rad_,pos_,vel_,color(0));
-        bigParticlePos = new PVector(0,0);
     }
 
     void calcForce() {
         force = new PVector(0,0);
+
         // wiggle
         force.x = random(-1,1) * SMALL_WIGGLE_FORCE*0.8;
         force.y = random(-1,1) * SMALL_WIGGLE_FORCE*0.8;
 
+        // form a circle around cluster parent
         if (SMALL_ATTRACTIVE_FORCE != 0) {
-            force.add(  PVector.sub(bigParticlePos,pos)   );
+            force.add(  PVector.sub(clusterParent.pos,pos)   );
             float dist = force.mag();
             force.normalize();
 
-            if (dist < bigParticleRad/2) {
+            if (dist < clusterParent.rad/2.0) {
                 force.mult(-1);
             }
         }
+    }
+
+    void postTick() {
+        c = color(hue(clusterParent.c),SMALL_SATURATION,SMALL_BRIGHTNESS);
     }
 
     void draw() {
@@ -254,7 +318,7 @@ class SmallParticle extends Particle {
         ellipse(pos.x, pos.y, rad, rad);
 
         stroke(c);
-        line(pos.x, pos.y, bigParticlePos.x, bigParticlePos.y);
+        line(pos.x, pos.y, clusterParent.pos.x, clusterParent.pos.y);
     }
 }
 
@@ -273,6 +337,7 @@ void setup() {
     size(WORLD_X, WORLD_Y);
     frameRate(30);
     smooth();
+    background(12);
  
     bigParticles = new ParticleGroup();
     bigParticles.velDamping = VEL_DAMPING;
@@ -307,6 +372,8 @@ void setup() {
     fs.enter();
 }
 
+
+
 void keyPressed() {
     if (key == 's') {
         for (int ii=0; ii < 40; ii++) {
@@ -340,22 +407,26 @@ void keyPressed() {
     }
 }
 
+
+
 void mousePressed() {
     PVector pos = new PVector(mouseX,mouseY);
     PVector vel = new PVector(0,0);
     bigParticles.add(  new BigParticle(BIG_PARTICLE_RAD, pos, vel)  );
 }
 
+
+
 void draw() {
     FRAME += 1;
-
-    background(12);
-
+    if (TRAILS == 0) {
+        background(12);
+    }
 
 
     for (int ii=0; ii < bigParticles.size(); ii++) {
         BigParticle bp = (BigParticle) bigParticles.get(ii);
-        bp.resetCluster();
+        bp.resetClusterMembership();
     }
     // each small particle finds its nearest big particle
     // and registers there
@@ -371,21 +442,26 @@ void draw() {
                 closestBigParticle = bp;
             }
         }
-        sp.c = color(hue(closestBigParticle.c),SMALL_SATURATION,SMALL_BRIGHTNESS);
-        sp.bigParticlePos = closestBigParticle.pos;
-        sp.bigParticleRad = closestBigParticle.rad;
-        closestBigParticle.seeNewClusterMember(sp);
+        sp.clusterParent = closestBigParticle;
+        closestBigParticle.addClusterMember(sp);
     }
     for (int ii=0; ii < bigParticles.size(); ii++) {
         BigParticle bp = (BigParticle) bigParticles.get(ii);
-        bp.finishSeeingNewClusterMembers();
+        bp.finalizeCluster();
     }
-
 
     smallParticles.tick();
     bigParticles.tick();
 
-    smallParticles.draw();
+    if (TRAILS == 1) {
+        fill(0,1);
+        noStroke();
+        rect(0,0,WORLD_X,WORLD_X);
+    }
+
+    if (TRAILS == 0) {
+        smallParticles.draw();
+    }
     bigParticles.draw();
 }
 
