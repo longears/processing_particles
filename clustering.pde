@@ -86,11 +86,49 @@ void clipToWorld(PVector pos, PVector vel) {
 //================================================================================
 // PARTICLE
 
+class ParticleGroup {
+    ArrayList particles;
+    float velDamping, maxVel, maxForce;
+
+    ParticleGroup() {
+        particles = new ArrayList();
+        velDamping = 0.1;
+        maxVel = 1000;
+        maxForce = 1000;
+    }
+    void add(Particle p) {
+        particles.add(p);
+        p.velDamping = velDamping;
+        p.maxVel = maxVel;
+        p.maxForce = maxForce;
+    }
+    Particle get(int ii) {
+        return (Particle) particles.get(ii);
+    }
+    int size() {
+        return particles.size();
+    }
+    void tick() {
+        for (int ii=0; ii < particles.size(); ii++) {
+            Particle p = (Particle) particles.get(ii);
+            p.tick();
+        }
+    }
+    void draw() {
+        for (int ii=0; ii < particles.size(); ii++) {
+            Particle p = (Particle) particles.get(ii);
+            p.draw();
+        }
+    }
+}
+
+
+
 class Particle {
     PVector pos, vel, force;
     color c;
-    float velDamping, maxVel, maxForce;
     float rad;
+    float velDamping, maxVel, maxForce;
 
     Particle(float rad_, PVector pos_, PVector vel_, color c_) {
         rad = rad_;
@@ -103,7 +141,7 @@ class Particle {
         maxForce = 1000;
     }
 
-    void preUpdate() {}
+    void preTick() {}
     void calcForce() {}
     void applyForce() {
         force.limit(maxForce);
@@ -113,13 +151,13 @@ class Particle {
         pos.add(PVector.mult(vel,TIME_SPEED));
         clipToWorld(pos,vel);
     }
-    void postUpdate() {}
+    void postTick() {}
 
-    void update() {
-        preUpdate();
+    void tick() {
+        preTick();
         calcForce();
         applyForce();
-        postUpdate();
+        postTick();
     }
 
     void draw() {
@@ -128,6 +166,8 @@ class Particle {
         ellipse(pos.x, pos.y, rad, rad);
     }
 }
+
+
 
 class BigParticle extends Particle {
     PVector clusterCenter;
@@ -145,6 +185,14 @@ class BigParticle extends Particle {
         numClusterMembers = 0;
         isLonely = 0;
     }
+
+    void calcForce() {
+        force = PVector.sub(clusterCenter,pos);
+    }
+    void postTick() {
+        rad = rad*(1-RAD_CHANGE_SPEED) + targetRad * RAD_CHANGE_SPEED;
+    }
+
 
     void resetCluster() {
         clusterCenter.mult(0);
@@ -171,20 +219,9 @@ class BigParticle extends Particle {
             isLonely = 0;
         }
     }
-
-    void calcForce() {
-        force = PVector.sub(clusterCenter,pos);
-    }
-    void postUpdate() {
-        rad = rad*(1-RAD_CHANGE_SPEED) + targetRad * RAD_CHANGE_SPEED;
-    }
-
-    void draw() {
-        fill(c);
-        noStroke();
-        ellipse(pos.x, pos.y, rad, rad);
-    }
 }
+
+
 
 class SmallParticle extends Particle {
     PVector bigParticlePos;
@@ -225,8 +262,8 @@ class SmallParticle extends Particle {
 //================================================================================
 // MAIN
 
-ArrayList bigParticles;
-ArrayList smallParticles;
+ParticleGroup bigParticles;
+ParticleGroup smallParticles;
 
 SoftFullScreen fs;
 
@@ -237,38 +274,33 @@ void setup() {
     frameRate(30);
     smooth();
  
-    bigParticles = new ArrayList();
-    smallParticles = new ArrayList();
+    bigParticles = new ParticleGroup();
+    bigParticles.velDamping = VEL_DAMPING;
+    bigParticles.maxForce = MAX_FORCE;
+    bigParticles.maxVel = 100000;
+
+    smallParticles = new ParticleGroup();
+    smallParticles.velDamping = 0;
+    smallParticles.maxForce = 10000;
+    smallParticles.maxVel = SMALL_MAX_SPEED;
 
     // set up big particles
     for (int ii=0; ii < N_BIG_PARTICLES; ii++) {
         PVector pos = new PVector(random(0,WORLD_X),random(0,WORLD_Y));
         PVector vel = new PVector(0,0);
-        BigParticle bp = new BigParticle(BIG_PARTICLE_RAD, pos, vel);
-        bp.velDamping = VEL_DAMPING;
-        bp.maxForce = MAX_FORCE;
-        bp.maxVel = 100000;
-        bigParticles.add(bp);
+        bigParticles.add(  new BigParticle(BIG_PARTICLE_RAD, pos, vel)  );
     }
     // set up small particles
     for (int ii=0; ii < N_SMALL_PARTICLES; ii++) {
         PVector pos = pointInCircle(new PVector(WORLD_X/2.0 * 0.7,WORLD_Y/2.0), WORLD_Y/2.0 * 0.85);
         PVector vel = new PVector(0,0);
-        SmallParticle sp = new SmallParticle(SMALL_PARTICLE_RAD, pos, vel);
-        sp.velDamping = 0;
-        sp.maxForce = 10000;
-        sp.maxVel = SMALL_MAX_SPEED;
-        smallParticles.add(sp);
+        smallParticles.add(  new SmallParticle(SMALL_PARTICLE_RAD, pos, vel)  );
     }
     // set up small particles
     for (int ii=0; ii < N_SMALL_PARTICLES/4; ii++) {
         PVector pos = pointInCircle(new PVector(WORLD_X/2.0 *1.7,WORLD_Y/2.0*0.8), WORLD_Y/2.0 * 0.3);
         PVector vel = new PVector(0,0);
-        SmallParticle sp = new SmallParticle(SMALL_PARTICLE_RAD, pos, vel);
-        sp.velDamping = 0;
-        sp.maxForce = 10000;
-        sp.maxVel = SMALL_MAX_SPEED;
-        smallParticles.add(sp);
+        smallParticles.add(  new SmallParticle(SMALL_PARTICLE_RAD, pos, vel)  );
     }
 
     fs = new SoftFullScreen(this);
@@ -281,22 +313,14 @@ void keyPressed() {
             PVector pos = pointInCircle(new PVector(mouseX,mouseY), 100);
             PVector vel = PVector.sub(pos, new PVector(mouseX,mouseY));
             vel.mult(5);
-            SmallParticle sp = new SmallParticle(SMALL_PARTICLE_RAD, pos, vel);
-            sp.velDamping = 0;
-            sp.maxForce = 10000;
-            sp.maxVel = SMALL_MAX_SPEED;
-            smallParticles.add(sp);
+            smallParticles.add(  new SmallParticle(SMALL_PARTICLE_RAD, pos, vel)  );
         }
     }
     if (key == 'b') {
         for (int ii=0; ii < 40; ii++) {
             PVector pos = pointInCircle(new PVector(mouseX,mouseY), 20);
             PVector vel = new PVector(0,0);
-            BigParticle bp = new BigParticle(BIG_PARTICLE_RAD, pos, vel);
-            bp.velDamping = VEL_DAMPING;
-            bp.maxForce = MAX_FORCE;
-            bp.maxVel = 100000;
-            bigParticles.add(bp);
+            bigParticles.add(  new BigParticle(BIG_PARTICLE_RAD, pos, vel)  );
         }
     }
     if (key == 'r') {
@@ -319,11 +343,7 @@ void keyPressed() {
 void mousePressed() {
     PVector pos = new PVector(mouseX,mouseY);
     PVector vel = new PVector(0,0);
-    BigParticle bp = new BigParticle(BIG_PARTICLE_RAD, pos, vel);
-    bp.velDamping = VEL_DAMPING;
-    bp.maxForce = MAX_FORCE;
-    bp.maxVel = 100000;
-    bigParticles.add(bp);
+    bigParticles.add(  new BigParticle(BIG_PARTICLE_RAD, pos, vel)  );
 }
 
 void draw() {
@@ -362,16 +382,11 @@ void draw() {
     }
 
 
-    for (int ii=0; ii < smallParticles.size(); ii++) {
-        SmallParticle sp = (SmallParticle) smallParticles.get(ii);
-        sp.update();
-        sp.draw();
-    }
-    for (int ii=0; ii < bigParticles.size(); ii++) {
-        BigParticle bp = (BigParticle) bigParticles.get(ii);
-        bp.update();
-        bp.draw();
-    }
+    smallParticles.tick();
+    bigParticles.tick();
+
+    smallParticles.draw();
+    bigParticles.draw();
 }
 
 
